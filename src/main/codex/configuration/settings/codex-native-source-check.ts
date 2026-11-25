@@ -21,7 +21,7 @@ export function startCodexNativeSourceCheck(
   systemTomlPath: string,
   runtimeConfig: string | null
 ): void {
-  if (pendingChecks.has(runtimeHomePath)) {
+  if (runtimeHomePath) {
     return
   }
   pendingChecks.add(runtimeHomePath)
