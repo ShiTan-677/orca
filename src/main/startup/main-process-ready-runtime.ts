@@ -6,7 +6,10 @@ import { browserSessionRegistry } from '../browser/sessions/profiles/browser-ses
 import { configureBrowserClientPageAutomationRuntime } from '../browser/client-pages/execution/browser-client-page-automation-runtime'
 import { openOffscreenBrowserPageLink } from '../runtime/browser/commands/offscreen-browser-page-link'
 import { startPreGoneCrashSampling } from '../crash-reporting/process-exits/process-gone-diagnostics'
-import { setMainMemorySpikeCounts } from '../memory/main-memory-spike-capture'
+import {
+  setMainMemorySpikeCounts,
+  startMainMemorySpikeSampling
+} from '../memory/main-memory-spike-capture'
 import { registeredPtyCount } from '../memory/pty-registry'
 import { getStructuredAgentSessionHost } from '../native-chat/agent-session-wire/host/structured-agent-session-registry'
 import { refuseRealtimeSchedulingUnderZeroRtTime } from './linux-runtime/linux-realtime-scheduling-guard'
@@ -43,6 +46,7 @@ function startProcessCrashObservers(): void {
     bots: state.store?.getBots().length ?? 0,
     terminals: registeredPtyCount()
   }))
+  startMainMemorySpikeSampling()
   // Sample live processes: gone-time metrics omit dead children and already-released memory.
   startPreGoneCrashSampling()
   app.on('child-process-gone', (_event, details) => {
