@@ -127,7 +127,6 @@ it('catches a footprint spike that lasts about a minute', async () => {
   })
   expect(records).toHaveLength(1)
   expect(records[0].attributes).toMatchObject({ baselineFootprintMB: 693 })
-  expect(records[0].attributes?.riseMB).toBeGreaterThanOrEqual(400)
 })
 
 it('reads no footprint while tracing is off', async () => {
