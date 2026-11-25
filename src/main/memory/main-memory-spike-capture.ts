@@ -2,17 +2,16 @@ import { getHeapSpaceStatistics, getHeapStatistics } from 'node:v8'
 import type { CrashReportDetailValue } from '../../shared/crash-reporting/crash-reporting'
 import { hasActiveTraceSink, startSpan } from '../observability/tracer'
 import { readWorkerThreadMemoryData } from '../worker-threads/worker-thread-diagnostics'
-import { readLiveProcessMetricDetails } from '../crash-reporting/process-exits/process-gone-diagnostics'
 
 /**
  * Main's footprint jumping by hundreds of MB names no owner after the fact, so a rise this large
  * within this window writes one breakdown to the local trace log. Triggers on the OS footprint
  * (macOS phys_footprint, Windows private bytes, Linux anonymous RSS plus swap) because the working
- * set misses memory the OS compresses or swaps out, and samples often enough to catch a 60 s spike.
+ * set misses memory the OS compresses or swaps out. Rides the 10 s host-memory tick, which catches
+ * a 60 s spike that a once-a-minute sample can miss.
  */
 export const MAIN_MEMORY_SPIKE_RISE_MB = 300
 export const MAIN_MEMORY_SPIKE_WINDOW_MS = 2 * 60_000
-export const MAIN_MEMORY_SPIKE_SAMPLE_INTERVAL_MS = 15_000
 /** Ticks fire late (more so on a busy main), so the oldest sample can be just past the window. */
 const SAMPLE_LATENESS_SLACK_MS = 30_000
 export const MAIN_MEMORY_SPIKE_MIN_INTERVAL_MS = 60 * 60_000
@@ -28,26 +27,25 @@ const recent: Sample[] = []
 let armedAtMs: number | null = null
 let lastCaptureAtMs = Number.NEGATIVE_INFINITY
 let readCounts: MainMemorySpikeCounts | null = null
-let sampleTimer: ReturnType<typeof setInterval> | null = null
+let readProcessMetrics: (() => Details) | null = null
 let sampleInFlight = false
 
 export function setMainMemorySpikeCounts(counts: MainMemorySpikeCounts | null): void {
   readCounts = counts
 }
 
-export function startMainMemorySpikeSampling(
-  intervalMs: number = MAIN_MEMORY_SPIKE_SAMPLE_INTERVAL_MS
-): void {
-  if (sampleTimer || typeof process.getProcessMemoryInfo !== 'function') {
-    return
-  }
-  sampleTimer = setInterval(() => void sampleMainFootprint(), intervalMs)
-  sampleTimer.unref?.()
+/** Read at capture time, so the per-process breakdown describes the spike rather than a minute before. */
+export function setMainMemorySpikeProcessMetrics(read: (() => Details) | null): void {
+  readProcessMetrics = read
 }
 
-/** One OS footprint read per tick, in-process; skipped while the last read is pending or tracing is off. */
-async function sampleMainFootprint(): Promise<void> {
-  if (sampleInFlight || !hasActiveTraceSink()) {
+/** One in-process OS footprint read; skipped while the last read is pending or tracing is off. */
+export async function sampleMainMemoryFootprint(): Promise<void> {
+  if (
+    sampleInFlight ||
+    !hasActiveTraceSink() ||
+    typeof process.getProcessMemoryInfo !== 'function'
+  ) {
     return
   }
   sampleInFlight = true
@@ -118,7 +116,7 @@ async function captureMainMemorySpike(trigger: {
     ['node', nodeMemory],
     ['v8', v8Heap],
     ['counts', countsData],
-    ['processMetrics', readLiveProcessMetricDetails]
+    ['processMetrics', () => readProcessMetrics?.() ?? {}]
   ] as const) {
     try {
       record(read())
@@ -191,9 +189,6 @@ export function resetMainMemorySpikeCaptureForTest(): void {
   armedAtMs = null
   lastCaptureAtMs = Number.NEGATIVE_INFINITY
   readCounts = null
-  if (sampleTimer) {
-    clearInterval(sampleTimer)
-  }
-  sampleTimer = null
+  readProcessMetrics = null
   sampleInFlight = false
 }

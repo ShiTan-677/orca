@@ -5,16 +5,15 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 vi.mock('../worker-threads/worker-thread-diagnostics', () => ({
   readWorkerThreadMemoryData: async () => ({ workers: 0 })
 }))
-vi.mock('../crash-reporting/process-exits/process-gone-diagnostics', () => ({
-  readLiveProcessMetricDetails: () => ({ processMetricsBrowserWorkingSetMB: 700 })
-}))
 
+import { PRE_GONE_SYSTEM_MEMORY_SAMPLE_INTERVAL_MS } from '../crash-reporting/memory/pre-gone-host-memory'
 import { setActiveSink } from '../observability/tracer'
 import {
   observeMainMemorySample,
   resetMainMemorySpikeCaptureForTest,
+  sampleMainMemoryFootprint,
   setMainMemorySpikeCounts,
-  startMainMemorySpikeSampling
+  setMainMemorySpikeProcessMetrics
 } from './main-memory-spike-capture'
 
 const MINUTE = 60_000
@@ -25,6 +24,7 @@ const counts = vi.fn(() => ({ openChats: 3, terminals: 2 }))
 beforeEach(() => {
   setActiveSink({ push: (record: SpanRecord) => records.push(record), flush() {}, close() {} })
   setMainMemorySpikeCounts(counts)
+  setMainMemorySpikeProcessMetrics(() => ({ processMetricsBrowserWorkingSetMB: 700 }))
 })
 
 afterEach(() => {
@@ -33,7 +33,7 @@ afterEach(() => {
   records.length = 0
   counts.mockClear()
   vi.useRealTimers()
-  delete (process as ProcessWithMemoryInfo).getProcessMemoryInfo
+  Reflect.deleteProperty(process, 'getProcessMemoryInfo')
 })
 
 async function settle(): Promise<void> {
@@ -99,31 +99,32 @@ it('writes one record for a spike and none for another within the hour', async (
   expect(records).toHaveLength(2)
 })
 
-type ProcessWithMemoryInfo = { getProcessMemoryInfo?: () => Promise<unknown> }
-
-function stubFootprint(footprintMBAt: (ms: number) => number): ReturnType<typeof vi.fn> {
+/** Feeds the footprint curve through the real read path, one read per host-memory tick. */
+async function sampleEveryHostMemoryTick(
+  untilMs: number,
+  footprintMBAt: (ms: number) => number
+): Promise<ReturnType<typeof vi.fn>> {
   const read = vi.fn(async () => ({ private: footprintMBAt(Date.now()) * 1024, shared: 0 }))
-  ;(process as ProcessWithMemoryInfo).getProcessMemoryInfo = read
+  Object.defineProperty(process, 'getProcessMemoryInfo', { value: read, configurable: true })
+  vi.useFakeTimers({ toFake: ['Date'] })
+  for (let ms = 0; ms <= untilMs; ms += PRE_GONE_SYSTEM_MEMORY_SAMPLE_INTERVAL_MS) {
+    vi.setSystemTime(ms)
+    await sampleMainMemoryFootprint()
+  }
+  await settle()
   return read
 }
 
 it('catches a footprint spike that lasts about a minute', async () => {
   // A reported spike: 693 MB to 1,223 MB of footprint in 63 s, then back down to 908 MB. Starting
   // 5 s before a minute tick, a once-a-minute sampler sees only 735 MB and then 908 MB.
-  vi.useFakeTimers({ now: 0 })
   const riseAt = 10 * MINUTE + 55_000
-  stubFootprint((ms) => {
+  await sampleEveryHostMemoryTick(15 * MINUTE, (ms) => {
     if (ms < riseAt) {
       return 693
     }
-    if (ms <= riseAt + 63_000) {
-      return Math.round(693 + ((ms - riseAt) / 63_000) * 530)
-    }
-    return 908
+    return ms <= riseAt + 63_000 ? Math.round(693 + ((ms - riseAt) / 63_000) * 530) : 908
   })
-  startMainMemorySpikeSampling()
-  await vi.advanceTimersByTimeAsync(15 * MINUTE)
-  await vi.runOnlyPendingTimersAsync()
   expect(records).toHaveLength(1)
   expect(records[0].attributes).toMatchObject({ baselineFootprintMB: 693 })
   expect(records[0].attributes?.riseMB).toBeGreaterThanOrEqual(400)
@@ -131,9 +132,6 @@ it('catches a footprint spike that lasts about a minute', async () => {
 
 it('reads no footprint while tracing is off', async () => {
   setActiveSink(null)
-  vi.useFakeTimers({ now: 0 })
-  const read = stubFootprint(() => 500)
-  startMainMemorySpikeSampling()
-  await vi.advanceTimersByTimeAsync(60 * MINUTE)
+  const read = await sampleEveryHostMemoryTick(60 * MINUTE, () => 500)
   expect(read).not.toHaveBeenCalled()
 })
