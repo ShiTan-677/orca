@@ -1,3 +1,4 @@
+import type { BridgeBackEdgeGuard } from '../bridge/page-lifecycle/bridge-page-back'
 import type { HostStatusReply } from '../../transport/hosts/host-status-reply-schema'
 import type {
   BridgeTerminalToolbar,
@@ -111,6 +112,7 @@ export type MobileWebShellBridgeArgs = {
   onPagePainted: () => void
   // Document resets explicitly publish false so retired pages cannot retain Back.
   onPageBackClaim: (claimed: boolean) => void
+  onPageBackEdgeGuards: (edgeGuards: readonly BridgeBackEdgeGuard[]) => void
   onPageLocation: (href: string) => void
   onPageSwapSafe: (safe: boolean, round: number) => void
   /** The page shows a terminal with its key row, or stopped; false again on each new document. */

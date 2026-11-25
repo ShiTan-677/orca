@@ -18,6 +18,7 @@ export function latestBridgeCallbacks(args: { readonly current: MobileWebShellBr
     onPageReady: () => args.current.onPageReady(),
     onPagePainted: () => args.current.onPagePainted(),
     onPageBackClaim: (claimed) => args.current.onPageBackClaim(claimed),
+    onPageBackEdgeGuards: (edgeGuards) => args.current.onPageBackEdgeGuards(edgeGuards),
     onPageLocation: (href) => args.current.onPageLocation(href),
     onPageSwapSafe: (safe, round) => args.current.onPageSwapSafe(safe, round),
     onTerminalKeyRailClaim: (claimed, inputOwner, toolbar) =>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import type { BridgeBackEdgeGuard } from './bridge/page-lifecycle/bridge-page-back'
 import { Alert, Linking, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useNavigation, useNavigationContainerRef, useRouter } from 'expo-router'
@@ -127,6 +128,8 @@ export function MobileWebShellScreen({
   useReportedHostAreaServing(ownsHostArea && state.kind !== 'checking')
   // Key dismissal by session id so a new generation’s refusal still appears.
   const [noticeDismissedFor, setNoticeDismissedFor] = useState<string | null>(null)
+  // Where an edge swipe stays with the page (the session tab bar) instead of going Back.
+  const [backEdgeGuards, setBackEdgeGuards] = useState<readonly BridgeBackEdgeGuard[]>([])
   const banner =
     updateNotice !== null
       ? { message: updateNoticeMessage(updateNotice), tone: 'failure' as const }
@@ -263,6 +266,7 @@ export function MobileWebShellScreen({
     // Keep the cover until the page reports its own first frame.
     onPagePainted: reportPagePainted,
     onPageBackClaim: reportPageBackClaim,
+    onPageBackEdgeGuards: setBackEdgeGuards,
     // A caller that tracks the location takes it; pages from #34484 desktops report it only for a fold to reopen.
     onPageLocation: (href) => {
       openTarget.recordLocation(href)
@@ -385,6 +389,7 @@ export function MobileWebShellScreen({
         bridgeEnabled={bridge.bridgeEnabled}
         onBridgeMessage={bridge.onBridgeMessage}
         backEdgeSwipe={backClaimed}
+        backEdgeGuards={backEdgeGuards}
         onBackEdgeSwipe={bridge.sendBack}
         onExternalNavigation={(event) => {
           const target = cancelledShellNavigationTarget(event.nativeEvent.url)
